@@ -1,0 +1,66 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pivot-api
+  namespace: pivot-api
+  labels:
+    app: pivot-api
+spec:
+  selector:
+    matchLabels:
+      app: pivot-api
+  revisionHistoryLimit: 3
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: pivot-api
+    spec:
+      containers:
+        - name: pivot-api
+          image: 073333704585.dkr.ecr.sa-east-1.amazonaws.com/ipe-hml/pivot-api
+          imagePullPolicy: IfNotPresent
+          resources:
+            limits:
+              cpu: 150m
+              memory: 250M
+            requests:
+              cpu: 30m
+              memory: 250M
+          ports:
+            - containerPort: 9013
+          envFrom:
+            - configMapRef:
+                name: pivot-api
+      imagePullSecrets:
+        - name: agroipe-ecr-registry
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchExpressions:
+                  - key: app
+                    operator: In
+                    values:
+                      - pivot-api
+              topologyKey: kubernetes.io/hostname
+      tolerations:
+        - key: "node-role.kubernetes.io/control-plane"
+          operator: "Exists"
+          effect: "NoSchedule"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pivot-api
+  namespace: pivot-api
+spec:
+  selector:
+    app: pivot-api
+  ports:
+    - protocol: TCP
+      port: 9013
+      targetPort: 9013
+      nodePort: 30013
+  type: NodePort

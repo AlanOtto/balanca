@@ -1,0 +1,75 @@
+trigger:
+  - production
+
+variables:
+  dockerRegistry: "agroipe-registry"
+  dockerUser: ""
+  namespace: "pivot-api"
+  TARGET_ENVIRONMENT: "prd"
+  repositoryName: "ipe-$(TARGET_ENVIRONMENT)/pivot-api"
+  amazonUrl: "073333704585.dkr.ecr.sa-east-1.amazonaws.com"
+  imageUrl: "$(amazonUrl)/$(repositoryName)"
+
+pool:
+  name: $(AZURE_PIPELINES_AGENT_POOL)
+  vmImage: $(AZURE_PIPELINES_VM_IMAGE)
+
+steps:
+  - task: UseNode@1
+    displayName: 'Use Node.js'
+    inputs:
+      version: '20.17.0' # specify the Node.js version you want to use
+      
+  # Step to install Yarn globally
+  - script: |
+      npm install -g yarn
+    displayName: 'Install Yarn globally'
+
+  # Step to install dependencies and run tests using Yarn
+  - script: |
+      yarn install
+      yarn test
+    displayName: 'Install dependencies and run tests'
+
+  # Step to package the application
+  - script: |
+      yarn build
+    displayName: 'Build the application'
+
+  - task: Docker@2
+    condition: succeeded()
+    inputs:
+      repository: "$(dockerUser)$(repositoryName)"
+      command: "build"
+      Dockerfile: "**/Dockerfile"
+      tags: |
+        $(Build.BuildId)
+        latest
+    displayName: "Building image to $(dockerRegistry)-$(TARGET_ENVIRONMENT)"
+
+  - task: ECRPushImage@1
+    condition: succeeded()
+    inputs:
+      awsCredentials: "azure-devops-deploy"
+      regionName: "sa-east-1"
+      imageSource: "imagename"
+      sourceImageName: "$(repositoryName)"
+      sourceImageTag: "$(Build.BuildId)"
+      repositoryName: "$(repositoryName)"
+      pushTag: "$(Build.BuildId)"
+      autoCreateRepository: true
+    displayName: "Pushing image to $(repository):$(Build.BuildId)"
+
+  - task: KubernetesManifest@0
+    condition: succeeded()
+    inputs:
+      action: "deploy"
+      kubernetesServiceConnection: kubernetes-$(TARGET_ENVIRONMENT)
+      namespace: $(namespace)
+      manifests: |
+        kubernetes/deployment-$(TARGET_ENVIRONMENT).yaml
+      containers: |
+        $(imageUrl):$(Build.BuildId)
+      rolloutStatusTimeout: "250"
+    displayName: "Deploying into kubernetes-$(TARGET_ENVIRONMENT)"
+    

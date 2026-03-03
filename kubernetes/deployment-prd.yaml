@@ -1,0 +1,79 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pivot-api
+  namespace: pivot-api
+  labels:
+    app: pivot-api
+spec:
+  selector:
+    matchLabels:
+      app: pivot-api
+  revisionHistoryLimit: 3
+  strategy:
+    rollingUpdate:
+      maxSurge: 50%
+      maxUnavailable: 50%
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app: pivot-api
+    spec:
+      containers:
+        - name: pivot-api
+          image: 073333704585.dkr.ecr.sa-east-1.amazonaws.com/ipe-prd/pivot-api
+          imagePullPolicy: IfNotPresent
+          resources:
+            limits:
+              cpu: 300m
+              memory: 350M
+            requests:
+              cpu: 30m
+              memory: 250M
+          ports:
+            - containerPort: 9013
+          envFrom:
+            - configMapRef:
+                name: pivot-api-database
+      imagePullSecrets:
+        - name: agroipe-ecr-registry
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchExpressions:
+                  - key: app
+                    operator: In
+                    values:
+                      - pivot-api
+              topologyKey: kubernetes.io/hostname
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pivot-api
+  namespace: pivot-api
+spec:
+  selector:
+    app: pivot-api
+  ports:
+    - protocol: TCP
+      port: 9013
+      targetPort: 9013
+      nodePort: 30013
+  type: NodePort
+---
+apiVersion: autoscaling/v1
+kind: HorizontalPodAutoscaler
+metadata:
+  name: pivot-api
+  namespace: pivot-api
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: pivot-api
+  minReplicas: 1
+  maxReplicas: 1
+  targetCPUUtilizationPercentage: 70
