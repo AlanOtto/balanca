@@ -2,67 +2,89 @@ const net = require('net');
 const express = require('express');
 const cors = require('cors');
 
-const BALANCA_IP = process.env.BALANCA_IP || '192.168.69.151';
-const BALANCA_PORT = Number(process.env.BALANCA_PORT) || 23;
+// ===== CONFIGURAÇÃO DAS BALANÇAS =====
+const BALANCAS = {
+  rsp: {
+    ip: '192.168.69.151',
+    port: 23,
+    peso: null,
+    ultimaLeitura: null
+  },
+  klabin: {
+    ip: '192.168.88.251',
+    port: 23,
+    peso: null,
+    ultimaLeitura: null
+  }
+};
 
-let pesoAtual = null;
-let ultimaLeitura = null;
+// ===== TCP CLIENT GENÉRICO =====
+function startTcpClient(nome, balanca) {
+  let socket = null;
+  let buffer = '';
 
-let socket = null;
-let buffer = '';
+  function conectar() {
+    if (socket) {
+      socket.destroy();
+      socket = null;
+    }
 
-// ===== TCP CLIENT =====
-function startTcpClient() {
-  if (socket) {
-    socket.destroy();
-    socket = null;
+    socket = new net.Socket();
+
+    // 🔥 ajustes críticos para tempo real
+    socket.setNoDelay(true);
+    socket.setKeepAlive(true, 5000);
+
+    socket.connect(balanca.port, balanca.ip, () => {
+      console.log(
+        new Date().toISOString(),
+        `[${nome}] Conectado à balança ${balanca.ip}:${balanca.port}`
+      );
+    });
+
+    socket.on('data', (data) => {
+      buffer += data.toString('utf8');
+
+      const linhas = buffer.split('\n');
+      buffer = linhas.pop();
+
+      for (const linha of linhas) {
+        const texto = linha.trim();
+        if (!texto) continue;
+
+        const match = texto.match(/([+-]?\d+)\s*kg/i);
+        if (!match) continue;
+
+        balanca.peso = Number(match[1]);
+        balanca.ultimaLeitura = new Date();
+      }
+    });
+
+    socket.on('close', (hadError) => {
+      console.warn(
+        new Date().toISOString(),
+        `[${nome}] Conexão encerrada`,
+        hadError ? '(com erro)' : ''
+      );
+      setTimeout(conectar, 3000);
+    });
+
+    socket.on('error', (err) => {
+      console.error(
+        new Date().toISOString(),
+        `[${nome}] Erro TCP:`,
+        err.message
+      );
+      socket.destroy();
+    });
   }
 
-  socket = new net.Socket();
-
-  // 🔥 AJUSTES CRÍTICOS PARA TEMPO REAL
-  socket.setNoDelay(true);          // desativa Nagle
-  socket.setKeepAlive(true, 5000);  // mantém conexão viva
-
-  socket.connect(BALANCA_PORT, BALANCA_IP, () => {
-    console.log(new Date().toISOString(), 'Conectado à balança', `${BALANCA_IP}:${BALANCA_PORT}`);
-  });
-
-  socket.on('data', (data) => {
-    buffer += data.toString('utf8');
-
-    // quebra corretamente por linha
-    const linhas = buffer.split('\n');
-    buffer = linhas.pop(); // mantém resto do pacote
-
-    for (const linha of linhas) {
-      const texto = linha.trim();
-      if (!texto) continue;
-
-      const match = texto.match(/([+-]?\d+)\s*kg/i);
-      if (!match) continue;
-
-      pesoAtual = Number(match[1]);
-      ultimaLeitura = new Date();
-    }
-  });
-
-  socket.on('close', (hadError) => {
-    console.warn(
-      new Date().toISOString(),
-      'Conexão TCP encerrada',
-      hadError ? '(com erro)' : ''
-    );
-    setTimeout(startTcpClient, 3000);
-  });
-
-  socket.on('error', (err) => {
-    console.error(new Date().toISOString(), 'Erro TCP:', err.message);
-    socket.destroy();
-  });
+  conectar();
 }
 
-startTcpClient();
+// 🔌 Inicia as duas balanças
+startTcpClient('RSP', BALANCAS.rsp);
+startTcpClient('KLABIN', BALANCAS.klabin);
 
 // ===== API =====
 const app = express();
@@ -71,9 +93,13 @@ app.use(express.json());
 
 app.get('/peso', (req, res) => {
   res.json({
-    peso: pesoAtual,
-    unidade: 'kg',
-    ultimaLeitura
+    peso_rsp: BALANCAS.rsp.peso,
+    ultimaLeitura_rsp: BALANCAS.rsp.ultimaLeitura,
+
+    peso_klabin: BALANCAS.klabin.peso,
+    ultimaLeitura_klabin: BALANCAS.klabin.ultimaLeitura,
+
+    unidade: 'kg'
   });
 });
 
